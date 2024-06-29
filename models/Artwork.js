@@ -18,6 +18,10 @@ const artworkSchema = new mongoose.Schema({
     ref: 'Artist',
     required: true
   },
+  artistName: {
+    type: String,
+    required: true,
+  },
   estimatedPrice: {
     type: Number,
     required: true,
@@ -36,15 +40,15 @@ const artworkSchema = new mongoose.Schema({
   salePrice: {
     type: Number,
   },
-  saleDate: {  // 新增出售日期字段
+  saleDate: {
     type: Date,
   },
   serialNumber: {
-    type: Number, // 新增编号字段
+    type: Number,
     required: true,
   },
   size: {
-    type: String, // 新增尺寸字段
+    type: String,
     required: true,
   },
 }, {

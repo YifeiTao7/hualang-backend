@@ -46,10 +46,6 @@ const artistSchema = new mongoose.Schema({
     type: String,
     default: "", // 默认为空字符串
   },
-  achievements: {
-    type: String,
-    default: "", // 默认为空字符串
-  },
   createdAt: {
     type: Date,
     default: Date.now,

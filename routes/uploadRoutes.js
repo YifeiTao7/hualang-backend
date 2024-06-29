@@ -5,7 +5,7 @@ const mongoose = require('mongoose');
 const Artwork = require('../models/Artwork');
 const User = require('../models/User');
 const Artist = require('../models/Artist');
-const Notification = require('../models/notification');
+const Notification = require('../models/Notification');
 const Exhibition = require('../models/Exhibition');
 const Company = require('../models/Company');
 
@@ -92,11 +92,12 @@ router.post('/artwork', upload.single('file'), async (req, res) => {
         estimatedPrice,
         size,
         artist: artist._id,
+        artistName: artist.name, // 设置 artistName 字段
         imageUrl: publicUrl,
         serialNumber,
         isSold: false,
         salePrice: -1,
-        saleDate: null, // 初始化 saleDate 字段
+        saleDate: null,
       });
 
       const savedArtwork = await artwork.save();
@@ -108,10 +109,10 @@ router.post('/artwork', upload.single('file'), async (req, res) => {
       if (artist.artworks.length >= artist.exhibitionsHeld) {
         const exhibition = new Exhibition({
           artistUserId: artist.userId,
-          artistName: artist.name, // 存储画家名字
+          artistName: artist.name,
           artworkCount: artist.artworks.length,
           date: new Date(),
-          companyId: artist.company._id, // 添加公司ID
+          companyId: artist.company._id,
         });
         await exhibition.save();
 

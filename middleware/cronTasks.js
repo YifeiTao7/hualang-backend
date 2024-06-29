@@ -19,10 +19,10 @@ const credentials = {
 const storage = new Storage({ credentials });
 const bucket = storage.bucket('yifeitaoblogs');
 
-cron.schedule('0 0 * * *', async () => {
+cron.schedule('0 0 * * *', async () => { // 每天凌晨执行一次
   try {
     const now = new Date();
-    const sevenDaysAgo = new Date(now.setDate(now.getDate() - 7));
+    const sevenDaysAgo = new Date(now.setDate(now.getDate() - 1));
 
     const artworksToDelete = await Artwork.find({
       saleDate: { $lte: sevenDaysAgo },
@@ -38,10 +38,18 @@ cron.schedule('0 0 * * *', async () => {
         await artist.save();
       }
 
-      // 删除谷歌云上的图片
+      // 删除 Google Cloud Storage 上的图片
       const fileName = artwork.imageUrl.split('/').pop();
-      const file = bucket.file(fileName);
-      await file.delete();
+      const filePath = `artworks/${fileName}`;
+      try {
+        await storage.bucket(bucket.name).file(filePath).delete();
+        console.log(`Deleted file from Google Cloud Storage: ${filePath}`);
+      } catch (err) {
+        console.error(`Failed to delete file from Google Cloud Storage: ${filePath}`, err);
+        if (err.code !== 404) {
+          throw err; // 处理其他类型的错误
+        }
+      }
     }
 
     console.log('Artworks and associated images deleted successfully');

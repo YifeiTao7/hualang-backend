@@ -74,7 +74,7 @@ router.get('/:id', async (req, res) => {
 
 // 更新艺术家信息
 router.put('/:id', async (req, res) => {
-  const { name, email, phone, address, weChat, qq, company, exhibitionsHeld, bio, achievements } = req.body;
+  const { name, email, phone, address, weChat, qq, company, exhibitionsHeld, bio } = req.body;
 
   try {
     const artist = await Artist.findOne({ userId: req.params.id });
@@ -90,8 +90,7 @@ router.put('/:id', async (req, res) => {
     artist.qq = qq || artist.qq;
     artist.company = company || artist.company;
     artist.exhibitionsHeld = exhibitionsHeld || artist.exhibitionsHeld;
-    artist.bio = bio || artist.bio; // 更新个人简介
-    artist.achievements = achievements || artist.achievements; // 更新成就
+    artist.bio = bio || artist.bio;
     artist.updatedAt = Date.now();
 
     const updatedArtist = await artist.save();
@@ -110,7 +109,6 @@ router.put('/:id', async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
-
 
 // 上传头像
 router.put('/:id/avatar', upload.single('avatar'), async (req, res) => {
