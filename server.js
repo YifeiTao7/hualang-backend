@@ -13,6 +13,10 @@ app.use(cors());
 app.use(express.json({ extended: false }));
 
 // Define Routes
+app.get('/', (req, res) => {
+  res.send('Hello, World!');
+});
+
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/upload', require('./routes/uploadRoutes'));
 app.use('/api/artworks', require('./routes/artworksRoutes'));
