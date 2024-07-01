@@ -5,7 +5,7 @@ const mongoose = require('mongoose');
 const Artwork = require('../models/Artwork');
 const User = require('../models/User');
 const Artist = require('../models/Artist');
-const Notification = require('../models/notification');
+const Notification = require('../models/Notification');
 const Exhibition = require('../models/Exhibition');
 const Company = require('../models/Company');
 
