@@ -1,5 +1,5 @@
 const express = require('express');
-const Notification = require('../models/Notification');
+const Notification = require('../models/notification');
 const Artist = require('../models/Artist');
 const Company = require('../models/Company');
 const router = express.Router();
