@@ -33,7 +33,7 @@ router.delete('/unbind-artist/:companyUserId/:artistUserId', async (req, res) =>
     }
 
     // 确保画家属于该公司
-    if (artist.company.toString() !== company._id.toString()) {
+    if (artist.company.toString() !== company.userId.toString()) {
       return res.status(400).json({ message: 'Artist does not belong to this company' });
     }
 

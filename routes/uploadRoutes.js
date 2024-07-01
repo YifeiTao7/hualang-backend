@@ -57,10 +57,19 @@ router.post('/artwork', upload.single('file'), async (req, res) => {
       return res.status(400).json({ message: "Invalid artist ID" });
     }
 
-    const artist = await Artist.findOne({ userId: artistId }).populate('company');
+    const artist = await Artist.findOne({ userId: artistId });
     if (!artist) {
+      console.log(`Artist not found for userId: ${artistId}`);
       return res.status(404).json({ message: "Artist not found" });
     }
+
+    const company = await Company.findOne({ userId: artist.company });
+    if (!company) {
+      console.log(`Company not found for userId: ${artist.company}`);
+      return res.status(404).json({ message: "Company not found for the artist" });
+    }
+
+    console.log(`Found artist: ${artist.name}, Company ID: ${company._id}`);
 
     const serialNumber = await getNextSerialNumber(artist._id);
 
@@ -92,7 +101,7 @@ router.post('/artwork', upload.single('file'), async (req, res) => {
         estimatedPrice,
         size,
         artist: artist._id,
-        artistName: artist.name, // 设置 artistName 字段
+        artistName: artist.name,
         imageUrl: publicUrl,
         serialNumber,
         isSold: false,
@@ -112,13 +121,13 @@ router.post('/artwork', upload.single('file'), async (req, res) => {
           artistName: artist.name,
           artworkCount: artist.artworks.length,
           date: new Date(),
-          companyId: artist.company._id,
+          companyId: company._id,
         });
         await exhibition.save();
 
         const notification = new Notification({
           senderId: artist._id,
-          receiverId: artist.company.userId,
+          receiverId: company.userId,
           type: 'alert',
           content: `画家 ${artist.name} 已达到办展要求，目前作品数量为 ${artist.artworks.length} 件。`,
         });
@@ -128,6 +137,7 @@ router.post('/artwork', upload.single('file'), async (req, res) => {
       res.status(201).json({ message: 'Artwork uploaded successfully', artwork: savedArtwork });
     });
   } catch (error) {
+    console.error('Error uploading artwork:', error);
     res.status(500).json({ message: "Error uploading artwork" });
   }
 });

@@ -1,8 +1,8 @@
 const express = require('express');
 const Artwork = require('../models/Artwork');
 const Artist = require('../models/Artist');
-const Company = require('../models/Company'); // 确保你引入了 Company 模型
-const { Storage } = require('@google-cloud/storage'); // 引入 Google Cloud Storage
+const Company = require('../models/Company');
+const { Storage } = require('@google-cloud/storage');
 const router = express.Router();
 const mongoose = require('mongoose');
 
@@ -51,7 +51,7 @@ router.get('/search', async (req, res) => {
         { artistName: new RegExp(query, 'i') }
       ],
       artist: { $in: artistIds }
-    });
+    }).populate('artist', 'userId'); // 确保填充 artist 字段
 
     console.log(`Found ${artworks.length} artworks matching the query.`);
 
@@ -61,6 +61,7 @@ router.get('/search', async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
+
 
 router.get('/artist/:userId', async (req, res) => {
   try {
@@ -76,7 +77,8 @@ router.get('/artist/:userId', async (req, res) => {
     }
     
     // 使用 artist 的 artworks 数组中的 _id 来查找作品
-    const artworks = await Artwork.find({ _id: { $in: artist.artworks } });
+    const artworks = await Artwork.find({ _id: { $in: artist.artworks } }).populate('artist');
+    console.log(artworks);
     res.status(200).json(artworks);
   } catch (err) {
     console.error('Server error:', err);
@@ -89,7 +91,7 @@ router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     console.log(`Fetching artwork with id: ${id}`);
-    const artwork = await Artwork.findById(id);
+    const artwork = await Artwork.findById(id).populate('artist');
     if (!artwork) {
       console.log(`Artwork not found with id: ${id}`);
       return res.status(404).json({ message: 'Artwork not found' });
@@ -150,7 +152,7 @@ router.put('/:id', async (req, res) => {
     const { isSold, salePrice } = req.body;
     console.log(`Updating artwork with id: ${id}, isSold: ${isSold}, salePrice: ${salePrice}`);
 
-    const artwork = await Artwork.findById(id);
+    const artwork = await Artwork.findById(id).populate('artist'); // 确保包含 artist 对象
     if (!artwork) {
       console.log(`Artwork not found with id: ${id}`);
       return res.status(404).json({ message: 'Artwork not found' });
