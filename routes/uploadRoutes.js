@@ -63,13 +63,15 @@ router.post('/artwork', upload.single('file'), async (req, res) => {
       return res.status(404).json({ message: "Artist not found" });
     }
 
-    const company = await Company.findOne({ userId: artist.company });
-    if (!company) {
-      console.log(`Company not found for userId: ${artist.company}`);
-      return res.status(404).json({ message: "Company not found for the artist" });
+    let company = null;
+    if (artist.company) {
+      company = await Company.findOne({ userId: artist.company });
+      if (!company) {
+        console.log(`Company not found for userId: ${artist.company}`);
+      }
     }
 
-    console.log(`Found artist: ${artist.name}, Company ID: ${company._id}`);
+    console.log(`Found artist: ${artist.name}, Company ID: ${company ? company._id : 'N/A'}`);
 
     const serialNumber = await getNextSerialNumber(artist._id);
 
@@ -121,17 +123,19 @@ router.post('/artwork', upload.single('file'), async (req, res) => {
           artistName: artist.name,
           artworkCount: artist.artworks.length,
           date: new Date(),
-          companyId: company._id,
+          companyId: company ? company._id : null,
         });
         await exhibition.save();
 
-        const notification = new Notification({
-          senderId: artist._id,
-          receiverId: company.userId,
-          type: 'alert',
-          content: `画家 ${artist.name} 已达到办展要求，目前作品数量为 ${artist.artworks.length} 件。`,
-        });
-        await notification.save();
+        if (company) {
+          const notification = new Notification({
+            senderId: artist._id,
+            receiverId: company.userId,
+            type: 'alert',
+            content: `画家 ${artist.name} 已达到办展要求，目前作品数量为 ${artist.artworks.length} 件。`,
+          });
+          await notification.save();
+        }
       }
 
       res.status(201).json({ message: 'Artwork uploaded successfully', artwork: savedArtwork });
