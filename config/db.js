@@ -1,17 +1,21 @@
-const mongoose = require('mongoose');
 require('dotenv').config();
+const { Pool } = require('pg');
 
-const connectDB = async () => {
-  try {
-    await mongoose.connect(process.env.MONGO_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
-    console.log('MongoDB connected successfully');
-  } catch (err) {
-    console.error('MongoDB connection error:', err);
-    process.exit(1);
+// 从环境变量中获取数据库连接字符串
+const connectionString = process.env.DATABASE_URL;
+
+const pool = new Pool({
+  connectionString: connectionString,
+  password: String(process.env.DB_PASSWORD) // 明确转换密码为字符串
+});
+
+// 示例查询
+pool.query('SELECT NOW()', (err, res) => {
+  if (err) {
+    console.error('Database connection error:', err.stack);
+  } else {
+    console.log('Database connected:', res.rows);
   }
-};
+});
 
-module.exports = connectDB;
+module.exports = pool;

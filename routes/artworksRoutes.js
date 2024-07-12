@@ -1,27 +1,27 @@
 const express = require('express');
-const Artwork = require('../models/Artwork');
-const Artist = require('../models/Artist');
-const Company = require('../models/Company');
-const { Storage } = require('@google-cloud/storage');
+const multer = require('multer');
+const qiniu = require('qiniu');
+const pool = require('../config/db'); // 引入数据库连接池
+const path = require('path');
 const router = express.Router();
-const mongoose = require('mongoose');
 
-// Google Cloud Storage 配置
-const credentials = {
-  type: process.env.TYPE,
-  project_id: process.env.PROJECT_ID,
-  private_key_id: process.env.PRIVATE_KEY_ID,
-  private_key: process.env.PRIVATE_KEY.replace(/\\n/g, '\n'),
-  client_email: process.env.CLIENT_EMAIL,
-  client_id: process.env.CLIENT_ID,
-  auth_uri: process.env.AUTH_URI,
-  token_uri: process.env.TOKEN_URI,
-  auth_provider_x509_cert_url: process.env.AUTH_PROVIDER_X509_CERT_URL,
-  client_x509_cert_url: process.env.CLIENT_X509_CERT_URL,
-};
+// 七牛云配置
+const accessKey = 'j7WinvxEHf6uCrdktyR-d8xl3c3qHgUs1BrK3lO4';
+const secretKey = 'vbqvDHTm54uAfjbjZwOOB55GIYgePspYGHrq4YXi';
+const bucket = 'zhonghualang';
 
-const storage = new Storage({ credentials });
-const bucketName = 'yifeitaoblogs';
+// 配置七牛云的鉴权对象
+const mac = new qiniu.auth.digest.Mac(accessKey, secretKey);
+const config = new qiniu.conf.Config();
+// 选择存储区域，例如华东
+config.zone = qiniu.zone.Zone_z0;
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB
+  },
+});
 
 // 根据画名和作者名搜索作品
 router.get('/search', async (req, res) => {
@@ -29,60 +29,49 @@ router.get('/search', async (req, res) => {
 
   try {
     console.log(`Searching artworks with query: ${query} and companyId: ${companyId}`);
-    const company = await Company.findOne({ userId: companyId });
+    const companyResult = await pool.query('SELECT * FROM Companies WHERE userid = $1', [companyId]);
 
-    if (!company) {
-      console.log(`Company not found for userId: ${companyId}`);
+    if (companyResult.rows.length === 0) {
+      console.log(`Company not found for userid: ${companyId}`);
       return res.status(404).json({ message: 'Company not found' });
     }
 
-    console.log(`Company found: ${company.name}`);
+    console.log(`Company found: ${companyResult.rows[0].name}`);
 
-    // 获取公司的所有艺术家
-    const artists = await Artist.find({ userId: { $in: company.artists } });
-    console.log(`Found ${artists.length} artists for the company.`);
+    const artistResult = await pool.query('SELECT * FROM Artists WHERE companyId = $1', [companyResult.rows[0].userid]);
+    console.log(`Found ${artistResult.rows.length} artists for the company.`);
 
-    const artistIds = artists.map(artist => artist._id);
+    const artistIds = artistResult.rows.map(artist => artist.userid);
     console.log(`Artist IDs: ${artistIds}`);
 
-    const artworks = await Artwork.find({
-      $or: [
-        { title: new RegExp(query, 'i') },
-        { artistName: new RegExp(query, 'i') }
-      ],
-      artist: { $in: artistIds }
-    }).populate('artist', 'userId'); // 确保填充 artist 字段
+    const artworkResult = await pool.query(
+      `SELECT Artworks.*, Users.name AS artistName 
+       FROM Artworks 
+       JOIN Artists ON Artworks.artistId = Artists.userid 
+       JOIN Users ON Artists.userid = Users.id
+       WHERE (Artworks.title ILIKE $1 OR Users.name ILIKE $1) 
+       AND Artworks.artistId = ANY($2::int[])`,
+      [`%${query}%`, artistIds]
+    );
 
-    console.log(`Found ${artworks.length} artworks matching the query.`);
-
-    res.status(200).json(artworks);
+    console.log(`Found ${artworkResult.rows.length} artworks matching the query.`);
+    res.status(200).json(artworkResult.rows);
   } catch (err) {
     console.error('Server error:', err);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-
-router.get('/artist/:userId', async (req, res) => {
+// 获取指定艺术家的所有作品
+router.get('/artist/:artistId', async (req, res) => {
+  const artistId = req.params.artistId;
   try {
-    const { userId } = req.params;
-    console.log(`Fetching artworks for artist with userId: ${userId}`);
-    
-    // 查找对应的 artist
-    const artist = await Artist.findOne({ userId });
-    
-    if (!artist) {
-      console.log(`Artist not found for userId: ${userId}`);
-      return res.status(404).json({ message: 'Artist not found' });
-    }
-    
-    // 使用 artist 的 artworks 数组中的 _id 来查找作品
-    const artworks = await Artwork.find({ _id: { $in: artist.artworks } }).populate('artist');
-    console.log(artworks);
-    res.status(200).json(artworks);
+    const result = await pool.query('SELECT * FROM Artworks WHERE artistId = $1', [artistId]);
+    console.log("Database Query Result:", result.rows); // 确认输出
+    res.json(result.rows);
   } catch (err) {
-    console.error('Server error:', err);
-    res.status(500).json({ message: 'Server error' });
+    console.error("Failed to fetch artworks:", err);
+    res.status(500).json({ message: err.message });
   }
 });
 
@@ -91,12 +80,15 @@ router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     console.log(`Fetching artwork with id: ${id}`);
-    const artwork = await Artwork.findById(id).populate('artist');
-    if (!artwork) {
+
+    const artworkResult = await pool.query('SELECT * FROM Artworks WHERE id = $1', [id]);
+
+    if (artworkResult.rows.length === 0) {
       console.log(`Artwork not found with id: ${id}`);
       return res.status(404).json({ message: 'Artwork not found' });
     }
-    res.status(200).json(artwork);
+
+    res.status(200).json(artworkResult.rows[0]);
   } catch (error) {
     console.error('Failed to fetch artwork:', error);
     res.status(500).json({ message: 'Failed to fetch artwork', error });
@@ -108,37 +100,28 @@ router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
     console.log(`Deleting artwork with id: ${id}`);
-    const artwork = await Artwork.findByIdAndDelete(id);
-    if (!artwork) {
+
+    const artworkResult = await pool.query('DELETE FROM Artworks WHERE id = $1 RETURNING *', [id]);
+
+    if (artworkResult.rows.length === 0) {
       console.log(`Artwork not found with id: ${id}`);
       return res.status(404).json({ message: 'Artwork not found' });
     }
 
-    // 删除 Google Cloud Storage 上的图片
-    const fileName = artwork.imageUrl.split('/').pop();
-    const filePath = `artworks/${fileName}`;
-    try {
-      await storage.bucket(bucketName).file(filePath).delete();
-      console.log(`Deleted file from Google Cloud Storage: ${filePath}`);
-    } catch (err) {
-      console.error(`Failed to delete file from Google Cloud Storage: ${filePath}`, err);
-      if (err.code !== 404) {
+    // 删除七牛云上的图片
+    const filePath = artworkResult.rows[0].imageurl;
+    const fileName = filePath.split('/').pop();
+    const bucketManager = new qiniu.rs.BucketManager(mac, config);
+
+    bucketManager.delete(bucket, `artworks/${fileName}`, function(err, respBody, respInfo) {
+      if (err) {
+        console.error('Failed to delete file from Qiniu:', err);
         return res.status(500).json({ message: 'Failed to delete artwork or associated image', error: err });
+      } else {
+        console.log('File deleted from Qiniu successfully:', respBody);
+        res.status(200).json({ message: 'Artwork and associated image deleted successfully' });
       }
-    }
-
-    // 更新艺术家的作品列表
-    const artist = await Artist.findById(artwork.artist);
-    if (artist) {
-      console.log(`Updating artist's artworks before: ${artist.artworks}`);
-      artist.artworks = artist.artworks.filter(artworkId => !artworkId.equals(mongoose.Types.ObjectId(id)));
-      await artist.save();
-      console.log(`Updating artist's artworks after: ${artist.artworks}`);
-    } else {
-      console.log(`Artist not found with id: ${artwork.artist}`);
-    }
-
-    res.status(200).json({ message: 'Artwork and associated image deleted successfully' });
+    });
   } catch (error) {
     console.error('Failed to delete artwork or associated image:', error);
     res.status(500).json({ message: 'Failed to delete artwork or associated image', error });
@@ -152,18 +135,20 @@ router.put('/:id', async (req, res) => {
     const { isSold, salePrice } = req.body;
     console.log(`Updating artwork with id: ${id}, isSold: ${isSold}, salePrice: ${salePrice}`);
 
-    const artwork = await Artwork.findById(id).populate('artist'); // 确保包含 artist 对象
-    if (!artwork) {
+    const artworkResult = await pool.query('SELECT * FROM Artworks WHERE id = $1', [id]);
+
+    if (artworkResult.rows.length === 0) {
       console.log(`Artwork not found with id: ${id}`);
       return res.status(404).json({ message: 'Artwork not found' });
     }
 
-    artwork.isSold = isSold;
-    artwork.salePrice = salePrice;
-    artwork.saleDate = isSold ? new Date() : null; // 更新售出日期
+    await pool.query(
+      `UPDATE Artworks SET isSold = $1, salePrice = $2, saleDate = $3, updatedAt = CURRENT_TIMESTAMP WHERE id = $4`,
+      [isSold, salePrice, isSold ? new Date() : null, id]
+    );
 
-    await artwork.save();
-    res.status(200).json({ message: 'Artwork updated successfully', artwork });
+    const updatedArtwork = await pool.query('SELECT * FROM Artworks WHERE id = $1', [id]);
+    res.status(200).json({ message: 'Artwork updated successfully', artwork: updatedArtwork.rows[0] });
   } catch (error) {
     console.error('Failed to update artwork:', error);
     res.status(500).json({ message: 'Failed to update artwork', error });

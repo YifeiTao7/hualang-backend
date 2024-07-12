@@ -1,31 +1,19 @@
 const express = require('express');
 const multer = require('multer');
-const { Storage } = require('@google-cloud/storage');
-const mongoose = require('mongoose');
-const Artwork = require('../models/Artwork');
-const User = require('../models/User');
-const Artist = require('../models/Artist');
-const Notification = require('../models/notification');
-const Exhibition = require('../models/Exhibition');
-const Company = require('../models/Company');
-
+const qiniu = require('qiniu');
+const pool = require('../config/db'); // 引入数据库连接池
 const router = express.Router();
 
-const credentials = {
-  type: process.env.TYPE,
-  project_id: process.env.PROJECT_ID,
-  private_key_id: process.env.PRIVATE_KEY_ID,
-  private_key: process.env.PRIVATE_KEY.replace(/\\n/g, '\n'),
-  client_email: process.env.CLIENT_EMAIL,
-  client_id: process.env.CLIENT_ID,
-  auth_uri: process.env.AUTH_URI,
-  token_uri: process.env.TOKEN_URI,
-  auth_provider_x509_cert_url: process.env.AUTH_PROVIDER_X509_CERT_URL,
-  client_x509_cert_url: process.env.CLIENT_X509_CERT_URL,
-};
+// 七牛云配置
+const accessKey = 'j7WinvxEHf6uCrdktyR-d8xl3c3qHgUs1BrK3lO4';
+const secretKey = 'vbqvDHTm54uAfjbjZwOOB55GIYgePspYGHrq4YXi';
+const bucket = 'zhonghualang';
 
-const storage = new Storage({ credentials });
-const bucket = storage.bucket('yifeitaoblogs');
+// 配置七牛云的鉴权对象
+const mac = new qiniu.auth.digest.Mac(accessKey, secretKey);
+const config = new qiniu.conf.Config();
+// 选择存储区域，例如华东
+config.zone = qiniu.zone.Zone_z0;
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -35,11 +23,11 @@ const upload = multer({
 });
 
 const getNextSerialNumber = async (artistId) => {
-  const artworks = await Artwork.find({ artist: artistId }).sort({ serialNumber: 1 });
+  const result = await pool.query('SELECT serialnumber FROM Artworks WHERE artistid = $1 ORDER BY serialnumber ASC', [artistId]);
   let nextSerialNumber = 1;
 
-  for (const artwork of artworks) {
-    if (artwork.serialNumber === nextSerialNumber) {
+  for (const artwork of result.rows) {
+    if (artwork.serialnumber === nextSerialNumber) {
       nextSerialNumber++;
     } else {
       break;
@@ -53,92 +41,92 @@ router.post('/artwork', upload.single('file'), async (req, res) => {
   const { title, description, estimatedPrice, size, artistId } = req.body;
 
   try {
-    if (!mongoose.Types.ObjectId.isValid(artistId)) {
-      return res.status(400).json({ message: "Invalid artist ID" });
-    }
-
-    const artist = await Artist.findOne({ userId: artistId });
-    if (!artist) {
-      console.log(`Artist not found for userId: ${artistId}`);
+    const artistResult = await pool.query('SELECT * FROM Artists WHERE userid = $1', [artistId]);
+    if (artistResult.rows.length === 0) {
+      console.log(`Artist not found for userid: ${artistId}`);
       return res.status(404).json({ message: "Artist not found" });
     }
 
+    const artist = artistResult.rows[0];
+    console.log('Artist data:', artist); // 添加调试信息
+
+    const userResult = await pool.query('SELECT name FROM Users WHERE id = $1', [artistId]);
+    if (userResult.rows.length === 0) {
+      console.log(`User not found for id: ${artistId}`);
+      return res.status(404).json({ message: "User not found" });
+    }
+    const artistname = userResult.rows[0].name;
+
     let company = null;
-    if (artist.company) {
-      company = await Company.findOne({ userId: artist.company });
-      if (!company) {
-        console.log(`Company not found for userId: ${artist.company}`);
+    if (artist.companyid) {
+      const companyResult = await pool.query('SELECT * FROM Companies WHERE userid = $1', [artist.companyid]);
+      if (companyResult.rows.length > 0) {
+        company = companyResult.rows[0];
       }
     }
 
-    console.log(`Found artist: ${artist.name}, Company ID: ${company ? company._id : 'N/A'}`);
+    console.log(`Found artist: ${artistname}, Company ID: ${company ? company.userid : 'N/A'}`);
 
-    const serialNumber = await getNextSerialNumber(artist._id);
+    const serialNumber = await getNextSerialNumber(artist.userid);
 
     const file = req.file;
     if (!file) {
       return res.status(400).json({ message: "No file uploaded" });
     }
 
-    const blob = bucket.file(`artworks/${Date.now()}-${file.originalname}`);
-    const blobStream = blob.createWriteStream({
-      resumable: false,
-      metadata: {
-        contentType: file.mimetype,
-      },
-    });
+    const options = {
+      scope: bucket,
+    };
+    const putPolicy = new qiniu.rs.PutPolicy(options);
+    const uploadToken = putPolicy.uploadToken(mac);
 
-    blobStream.on('error', (err) => {
-      return res.status(500).json({ message: "Error uploading file" });
-    });
+    const formUploader = new qiniu.form_up.FormUploader(config);
+    const putExtra = new qiniu.form_up.PutExtra();
 
-    blobStream.end(file.buffer);
+    const key = `artworks/${Date.now()}-${file.originalname}`;
 
-    blobStream.on('finish', async () => {
-      const publicUrl = `https://storage.googleapis.com/${bucket.name}/${blob.name}`;
-
-      const artwork = new Artwork({
-        title,
-        description,
-        estimatedPrice,
-        size,
-        artist: artist._id,
-        artistName: artist.name,
-        imageUrl: publicUrl,
-        serialNumber,
-        isSold: false,
-        salePrice: -1,
-        saleDate: null,
-      });
-
-      const savedArtwork = await artwork.save();
-
-      artist.artworks.push(savedArtwork._id);
-      await artist.save();
-
-      // 检查艺术家的作品数量是否达到办展数
-      if (artist.artworks.length >= artist.exhibitionsHeld) {
-        const exhibition = new Exhibition({
-          artistUserId: artist.userId,
-          artistName: artist.name,
-          artworkCount: artist.artworks.length,
-          date: new Date(),
-          companyId: company ? company._id : null,
-        });
-        await exhibition.save();
-
-        if (company) {
-          const notification = new Notification({
-            senderId: artist._id,
-            receiverId: company.userId,
-            type: 'alert',
-            content: `画家 ${artist.name} 已达到办展要求，目前作品数量为 ${artist.artworks.length} 件。`,
-          });
-          await notification.save();
-        }
+    formUploader.put(uploadToken, key, file.buffer, putExtra, async (err, body, info) => {
+      if (err) {
+        console.log('Error uploading file:', err);
+        return res.status(500).json({ message: "Error uploading file" });
       }
+      if (info.statusCode == 200) {
+        const publicUrl = `http://sggkpr4pz.hd-bkt.clouddn.com/${key}`;
 
-      res.status(201).json({ message: 'Artwork uploaded successfully', artwork: savedArtwork });
+        const artworkResult = await pool.query(
+          'INSERT INTO Artworks (title, description, estimatedprice, size, artistid, imageurl, serialnumber, issold, saleprice, saledate) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *',
+          [title, description, estimatedPrice, size, artist.userid, publicUrl, serialNumber, false, -1, null]
+        );
+
+        const savedArtwork = artworkResult.rows[0];
+        console.log('Artwork saved:', savedArtwork);
+
+        // 检查艺术家的作品数量是否达到办展数
+        const artworkCountResult = await pool.query('SELECT COUNT(*) FROM Artworks WHERE artistid = $1', [artist.userid]);
+        const artworkCount = parseInt(artworkCountResult.rows[0].count, 10);
+        console.log(`Artist ${artistname} has ${artworkCount} artworks. exhibitionsheld: ${artist.exhibitionsheld}`);
+
+        if (artworkCount >= artist.exhibitionsheld) { // 确保字段名一致
+          const exhibitionResult = await pool.query(
+            'INSERT INTO Exhibitions (artistuserid, artworkcount, date, companyid) VALUES ($1, $2, $3, $4) RETURNING *',
+            [artist.userid, artworkCount, new Date(), company ? company.userid : null]
+          );
+          console.log('Exhibition created:', exhibitionResult.rows[0]);
+
+          if (company) {
+            const notificationResult = await pool.query(
+              'INSERT INTO Notifications (senderid, receiverid, type, content) VALUES ($1, $2, $3, $4) RETURNING *',
+              [artist.userid, company.userid, 'alert', `画家 ${artistname} 已达到办展要求，目前作品数量为 ${artworkCount} 件。`]
+            );
+            console.log('Notification sent:', notificationResult.rows[0]);
+          }
+        }
+
+        res.status(201).json({ message: 'Artwork uploaded successfully', artwork: savedArtwork });
+      } else {
+        console.log('Error response from Qiniu:', body);
+        res.status(info.statusCode).json({ message: body.error });
+      }
     });
   } catch (error) {
     console.error('Error uploading artwork:', error);

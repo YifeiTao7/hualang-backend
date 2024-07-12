@@ -1,52 +1,48 @@
 const express = require('express');
+const pool = require('../config/db'); // 引入数据库连接池
 const router = express.Router();
-const Company = require('../models/Company');
-const Artist = require('../models/Artist');
 
 // 获取公司信息
-router.get('/:userId', async (req, res) => {
+router.get('/:userid', async (req, res) => {
   try {
-    const company = await Company.findOne({ userId: req.params.userId });
-    if (!company) {
+    const result = await pool.query('SELECT * FROM Companies WHERE userid = $1', [req.params.userid]);
+    if (result.rows.length === 0) {
       return res.status(404).json({ message: 'Company not found' });
     }
-    res.json(company);
+    res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
 
 // 解约画家
-router.delete('/unbind-artist/:companyUserId/:artistUserId', async (req, res) => {
+router.delete('/unbind-artist/:companyuserid/:artistuserid', async (req, res) => {
   try {
-    const { companyUserId, artistUserId } = req.params;
-    const artist = await Artist.findOne({ userId: artistUserId });
+    const { companyuserid, artistuserid } = req.params;
+    
+    console.log(`Unbinding artist ${artistuserid} from company ${companyuserid}`);
 
-    if (!artist) {
+    const artistResult = await pool.query('SELECT * FROM Artists WHERE userid = $1', [artistuserid]);
+    if (artistResult.rows.length === 0) {
       return res.status(404).json({ message: 'Artist not found' });
     }
+    const artist = artistResult.rows[0];
 
-    const company = await Company.findOne({ userId: companyUserId });
-
-    if (!company) {
+    const companyResult = await pool.query('SELECT * FROM Companies WHERE userid = $1', [companyuserid]);
+    if (companyResult.rows.length === 0) {
       return res.status(404).json({ message: 'Company not found' });
     }
+    const company = companyResult.rows[0];
+
+    console.log(`Artist companyId: ${artist.companyid}, Company userId: ${company.userid}`);
 
     // 确保画家属于该公司
-    if (artist.company.toString() !== company.userId.toString()) {
+    if (artist.companyid !== company.userid) {
       return res.status(400).json({ message: 'Artist does not belong to this company' });
     }
 
-    // 从公司的 artists 数组中移除指定的画家userId
-    console.log('Before update:', company.artists); // 日志记录
-    company.artists = company.artists.filter(userId => userId.toString() !== artist.userId.toString());
-    console.log('After update:', company.artists); // 日志记录
-
-    // 将 artist 的 company 字段置为空
-    artist.company = null;
-
-    await company.save();
-    await artist.save();
+    // 将 artist 的 companyid 字段置为空
+    await pool.query('UPDATE Artists SET companyid = NULL WHERE userid = $1', [artistuserid]);
 
     res.json({ message: 'Artist unbound successfully' });
   } catch (err) {
@@ -56,8 +52,8 @@ router.delete('/unbind-artist/:companyUserId/:artistUserId', async (req, res) =>
 });
 
 // 订阅会员
-router.post('/membership/:userId/subscribe', async (req, res) => {
-  const { userId } = req.params;
+router.post('/membership/:userid/subscribe', async (req, res) => {
+  const { userid } = req.params;
   const { type } = req.body;
 
   let membershipEndDate;
@@ -72,19 +68,19 @@ router.post('/membership/:userId/subscribe', async (req, res) => {
   }
 
   try {
-    const company = await Company.findOneAndUpdate(
-      { userId },
-      { 
-        membership: type, 
-        membershipStartDate: new Date(),
-        membershipEndDate: membershipEndDate 
-      },
-      { new: true }
+    const result = await pool.query(
+      `UPDATE Companies 
+       SET membership = $1, membershipStartDate = $2, membershipEndDate = $3 
+       WHERE userid = $4 
+       RETURNING membership, membershipStartDate, membershipEndDate`,
+      [type, new Date(), membershipEndDate, userid]
     );
-    if (!company) {
+
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Company not found' });
     }
-    res.json({ membership: company.membership, membershipStartDate: company.membershipStartDate, membershipEndDate: company.membershipEndDate });
+
+    res.json(result.rows[0]);
   } catch (error) {
     console.error('Failed to update membership:', error);
     res.status(500).json({ error: 'Internal server error' });

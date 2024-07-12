@@ -29,7 +29,7 @@ const artworkSchema = new mongoose.Schema({
   soldPrice: {
     type: Number,
   },
-  imageUrl: {
+  imageurl: {
     type: String,
     required: true,
   },
