@@ -1,6 +1,67 @@
 const express = require('express');
 const pool = require('../config/db'); // 引入数据库连接池
+const dayjs = require('dayjs'); // 引入 dayjs 库
 const router = express.Router();
+
+// 生成时间标签的辅助函数
+const generateTimeLabels = (period) => {
+  const labels = [];
+  const now = dayjs();
+
+  if (period === "week") {
+    const daysOfWeek = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+    for (let i = 0; i < 7; i++) {
+      labels.unshift(daysOfWeek[now.subtract(i, "day").day()]);
+    }
+  } else if (period === "month") {
+    for (let i = 1; i <= now.daysInMonth(); i++) {
+      labels.push(`${i}日`);
+    }
+  } else if (period === "year") {
+    const months = [
+      "一月",
+      "二月",
+      "三月",
+      "四月",
+      "五月",
+      "六月",
+      "七月",
+      "八月",
+      "九月",
+      "十月",
+      "十一月",
+      "十二月",
+    ];
+    for (let i = 0; i < 12; i++) {
+      labels.push(months[i]);
+    }
+  }
+
+  console.log(`Generated time labels for period ${period}:`, labels);
+  return labels;
+};
+
+const generateDateLabels = (period) => {
+  const labels = [];
+  const now = dayjs();
+
+  if (period === "week") {
+    for (let i = 0; i < 7; i++) {
+      labels.unshift(now.subtract(i, "day").format("YYYY-MM-DD"));
+    }
+  } else if (period === "month") {
+    for (let i = 1; i <= now.daysInMonth(); i++) {
+      labels.push(now.date(i).format("YYYY-MM-DD"));
+    }
+  } else if (period === "year") {
+    for (let i = 0; i < 12; i++) {
+      labels.push(now.month(i).format("YYYY-MM"));
+    }
+  }
+
+  console.log(`Generated date labels for period ${period}:`, labels);
+  return labels;
+};
 
 // 获取公司信息
 router.get('/:userid', async (req, res) => {
@@ -85,6 +146,126 @@ router.post('/membership/:userid/subscribe', async (req, res) => {
     console.error('Failed to update membership:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
+});
+
+// 获取热销题材
+router.get('/:userid/hot-themes', async (req, res) => {
+  const { period } = req.query;
+
+  let periodCondition;
+  switch (period) {
+    case 'week':
+      periodCondition = "DATE_TRUNC('week', NOW())";
+      break;
+    case 'month':
+      periodCondition = "DATE_TRUNC('month', NOW())";
+      break;
+    case 'year':
+      periodCondition = "DATE_TRUNC('year', NOW())";
+      break;
+    default:
+      return res.status(400).json({ message: 'Invalid period' });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT artworks.theme, COUNT(sales.id) AS salesCount
+       FROM Sales AS sales
+       JOIN Artworks AS artworks ON sales.artworkid = artworks.id
+       WHERE sales.saleDate >= ${periodCondition}
+       GROUP BY artworks.theme`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error fetching hot themes:', err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// 获取销售状况
+router.get('/:userid/sales-status', async (req, res) => {
+  const { period } = req.query;
+
+  let periodCondition;
+  switch (period) {
+    case 'week':
+      periodCondition = "DATE_TRUNC('week', NOW())";
+      break;
+    case 'month':
+      periodCondition = "DATE_TRUNC('month', NOW())";
+      break;
+    case 'year':
+      periodCondition = "DATE_TRUNC('year', NOW())";
+      break;
+    default:
+      return res.status(400).json({ message: 'Invalid period' });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT TO_CHAR(sales.saleDate, 'YYYY-MM-DD') AS label,
+              SUM(sales.salePrice) AS totalSales,
+              SUM(sales.profit) AS totalProfit
+       FROM Sales AS sales
+       WHERE sales.saleDate >= ${periodCondition}
+       GROUP BY TO_CHAR(sales.saleDate, 'YYYY-MM-DD')
+       ORDER BY label`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error fetching sales status:', err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// 获取热销尺寸
+router.get('/:userid/hot-sizes', async (req, res) => {
+  const { period } = req.query;
+
+  let periodCondition;
+  switch (period) {
+    case 'week':
+      periodCondition = "DATE_TRUNC('week', NOW())";
+      break;
+    case 'month':
+      periodCondition = "DATE_TRUNC('month', NOW())";
+      break;
+    case 'year':
+      periodCondition = "DATE_TRUNC('year', NOW())";
+      break;
+    default:
+      return res.status(400).json({ message: 'Invalid period' });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT artworks.size, COUNT(sales.id) AS salesCount
+       FROM Sales AS sales
+       JOIN Artworks AS artworks ON sales.artworkid = artworks.id
+       WHERE sales.saleDate >= ${periodCondition}
+       GROUP BY artworks.size`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error fetching hot sizes:', err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// 获取时间标签
+router.get('/time/timelabels', (req, res) => {
+  const { period } = req.query;
+
+  if (!["week", "month", "year"].includes(period)) {
+    return res.status(400).json({ message: 'Invalid period' });
+  }
+
+  const timeLabels = generateTimeLabels(period);
+  const dateLabels = generateDateLabels(period);
+
+  console.log(`Returning time labels and date labels for period ${period}:`, { timeLabels, dateLabels });
+
+  res.json({ timeLabels, dateLabels });
 });
 
 module.exports = router;

@@ -1,5 +1,6 @@
 const express = require('express');
 const multer = require('multer');
+const sharp = require('sharp');
 const qiniu = require('qiniu');
 const pool = require('../config/db'); // 引入数据库连接池
 const router = express.Router();
@@ -18,7 +19,7 @@ config.zone = qiniu.zone.Zone_z0;
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 5 * 1024 * 1024,
+    fileSize: 20 * 1024 * 1024, // 增加文件大小限制到20MB
   },
 });
 
@@ -38,7 +39,7 @@ const getNextSerialNumber = async (artistId) => {
 };
 
 router.post('/artwork', upload.single('file'), async (req, res) => {
-  const { title, description, estimatedPrice, size, artistId } = req.body;
+  const { title, theme, size, artistId, isAwardWinning, awardDetails, isPublished } = req.body;
 
   try {
     const artistResult = await pool.query('SELECT * FROM Artists WHERE userid = $1', [artistId]);
@@ -48,7 +49,7 @@ router.post('/artwork', upload.single('file'), async (req, res) => {
     }
 
     const artist = artistResult.rows[0];
-    console.log('Artist data:', artist); // 添加调试信息
+    console.log('Artist data:', artist);
 
     const userResult = await pool.query('SELECT name FROM Users WHERE id = $1', [artistId]);
     if (userResult.rows.length === 0) {
@@ -74,6 +75,15 @@ router.post('/artwork', upload.single('file'), async (req, res) => {
       return res.status(400).json({ message: "No file uploaded" });
     }
 
+    // 使用sharp压缩图片并保持较高质量
+    const compressedImage = await sharp(file.buffer)
+      .resize(1024, 1024, {
+        fit: sharp.fit.inside,
+        withoutEnlargement: true
+      })
+      .jpeg({ quality: 90 }) // 设置JPEG质量为90
+      .toBuffer();
+
     const options = {
       scope: bucket,
     };
@@ -85,7 +95,7 @@ router.post('/artwork', upload.single('file'), async (req, res) => {
 
     const key = `artworks/${Date.now()}-${file.originalname}`;
 
-    formUploader.put(uploadToken, key, file.buffer, putExtra, async (err, body, info) => {
+    formUploader.put(uploadToken, key, compressedImage, putExtra, async (err, body, info) => {
       if (err) {
         console.log('Error uploading file:', err);
         return res.status(500).json({ message: "Error uploading file" });
@@ -94,8 +104,8 @@ router.post('/artwork', upload.single('file'), async (req, res) => {
         const publicUrl = `http://sggkpr4pz.hd-bkt.clouddn.com/${key}`;
 
         const artworkResult = await pool.query(
-          'INSERT INTO Artworks (title, description, estimatedprice, size, artistid, imageurl, serialnumber, issold, saleprice, saledate) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *',
-          [title, description, estimatedPrice, size, artist.userid, publicUrl, serialNumber, false, -1, null]
+          'INSERT INTO Artworks (title, theme, size, artistid, imageurl, serialnumber, issold, saleprice, saledate, isawardwinning, awarddetails, ispublished) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *',
+          [title, theme, size, artist.userid, publicUrl, serialNumber, false, null, null, isAwardWinning || false, awardDetails || null, isPublished || false]
         );
 
         const savedArtwork = artworkResult.rows[0];
@@ -107,18 +117,32 @@ router.post('/artwork', upload.single('file'), async (req, res) => {
         console.log(`Artist ${artistname} has ${artworkCount} artworks. exhibitionsheld: ${artist.exhibitionsheld}`);
 
         if (artworkCount >= artist.exhibitionsheld) { // 确保字段名一致
-          const exhibitionResult = await pool.query(
-            'INSERT INTO Exhibitions (artistuserid, artworkcount, date, companyid) VALUES ($1, $2, $3, $4) RETURNING *',
-            [artist.userid, artworkCount, new Date(), company ? company.userid : null]
-          );
-          console.log('Exhibition created:', exhibitionResult.rows[0]);
+          // 检查是否已有展会存在
+          const existingExhibitionResult = await pool.query('SELECT * FROM Exhibitions WHERE artistuserid = $1', [artist.userid]);
 
-          if (company) {
-            const notificationResult = await pool.query(
-              'INSERT INTO Notifications (senderid, receiverid, type, content) VALUES ($1, $2, $3, $4) RETURNING *',
-              [artist.userid, company.userid, 'alert', `画家 ${artistname} 已达到办展要求，目前作品数量为 ${artworkCount} 件。`]
+          if (existingExhibitionResult.rows.length > 0) {
+            // 更新现有展会的作品数量
+            const existingExhibition = existingExhibitionResult.rows[0];
+            const updatedExhibitionResult = await pool.query(
+              'UPDATE Exhibitions SET artworkcount = $1 WHERE id = $2 RETURNING *',
+              [artworkCount, existingExhibition.id]
             );
-            console.log('Notification sent:', notificationResult.rows[0]);
+            console.log('Exhibition updated:', updatedExhibitionResult.rows[0]);
+          } else {
+            // 创建新展会
+            const exhibitionResult = await pool.query(
+              'INSERT INTO Exhibitions (artistuserid, artworkcount, date, companyid) VALUES ($1, $2, $3, $4) RETURNING *',
+              [artist.userid, artworkCount, new Date(), company ? company.userid : null]
+            );
+            console.log('Exhibition created:', exhibitionResult.rows[0]);
+
+            if (company) {
+              const notificationResult = await pool.query(
+                'INSERT INTO Notifications (senderid, receiverid, type, content) VALUES ($1, $2, $3, $4) RETURNING *',
+                [artist.userid, company.userid, 'alert', `画家 ${artistname} 已达到办展要求。`]
+              );
+              console.log('Notification sent:', notificationResult.rows[0]);
+            }
           }
         }
 
