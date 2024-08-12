@@ -101,7 +101,7 @@ router.post('/artwork', upload.single('file'), async (req, res) => {
         return res.status(500).json({ message: "Error uploading file" });
       }
       if (info.statusCode == 200) {
-        const publicUrl = `http://sggkpr4pz.hd-bkt.clouddn.com/${key}`;
+        const publicUrl = `http://si3iiavab.hd-bkt.clouddn.com/${key}`;
 
         const artworkResult = await pool.query(
           'INSERT INTO Artworks (title, theme, size, artistid, imageurl, serialnumber, issold, saleprice, saledate, isawardwinning, awarddetails, ispublished) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *',
