@@ -7,7 +7,7 @@ const router = express.Router();
 
 const accessKey = 'j7WinvxEHf6uCrdktyR-d8xl3c3qHgUs1BrK3lO4';
 const secretKey = 'vbqvDHTm54uAfjbjZwOOB55GIYgePspYGHrq4YXi';
-const bucket = 'zhonghualang';
+const bucket = 'hualang-bucket';
 
 const mac = new qiniu.auth.digest.Mac(accessKey, secretKey);
 const config = new qiniu.conf.Config();

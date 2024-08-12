@@ -8,7 +8,7 @@ const router = express.Router();
 // 七牛云配置
 const accessKey = 'j7WinvxEHf6uCrdktyR-d8xl3c3qHgUs1BrK3lO4';
 const secretKey = 'vbqvDHTm54uAfjbjZwOOB55GIYgePspYGHrq4YXi';
-const bucket = 'zhonghualang';
+const bucket = 'hualang-bucket';
 
 // 配置七牛云的鉴权对象
 const mac = new qiniu.auth.digest.Mac(accessKey, secretKey);
